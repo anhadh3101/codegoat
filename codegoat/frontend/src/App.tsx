@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import './App.css'
@@ -102,11 +102,58 @@ function SignInPage() {
 
 function IndexPage() {
   const [isConnecting, setIsConnecting] = useState(false)
+  const [isGithubConnected, setIsGithubConnected] = useState(false)
   const [connectionError, setConnectionError] = useState('')
-  const [isRepoModalOpen, setIsRepoModalOpen] = useState(false)
   const [isLoadingRepos, setIsLoadingRepos] = useState(false)
   const [repositories, setRepositories] = useState<Repository[]>([])
   const [repoError, setRepoError] = useState('')
+
+  useEffect(() => {
+    const loadGithubStatus = async () => {
+      if (!isSupabaseConfigured) return
+
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      try {
+        const response = await fetch('/api/integrations/github/status', {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`
+          }
+        })
+        const result = await response.json()
+
+        if (!response.ok || result.connected !== true) return
+
+        setIsGithubConnected(true)
+        setIsLoadingRepos(true)
+
+        try {
+          const repositoriesResponse = await fetch('/api/repos', {
+            headers: {
+              Authorization: `Bearer ${session.access_token}`
+            }
+          })
+          const repositoriesResult = await repositoriesResponse.json()
+
+          if (!repositoriesResponse.ok) {
+            setRepoError(repositoriesResult.error || 'Unable to load repositories.')
+            return
+          }
+
+          setRepositories(Array.isArray(repositoriesResult.repositories) ? repositoriesResult.repositories : [])
+        } catch {
+          setRepoError('Unable to reach the repository service.')
+        } finally {
+          setIsLoadingRepos(false)
+        }
+      } catch {
+        setIsGithubConnected(false)
+      }
+    }
+
+    void loadGithubStatus()
+  }, [])
 
   const handleConnectGitHub = async () => {
     setConnectionError('')
@@ -138,40 +185,6 @@ function IndexPage() {
     window.location.assign(result.redirectUrl)
   }
 
-  const handleOpenRepositories = async () => {
-    setIsRepoModalOpen(true)
-    setIsLoadingRepos(true)
-    setRepoError('')
-
-    const { data: { session } } = await supabase.auth.getSession()
-
-    if (!session) {
-      setIsLoadingRepos(false)
-      setRepoError('Sign in before viewing repositories.')
-      return
-    }
-
-    try {
-      const response = await fetch('/api/repos', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`
-        }
-      })
-      const result = await response.json()
-
-      if (!response.ok) {
-        setRepoError(result.error || 'Unable to load repositories.')
-        return
-      }
-
-      setRepositories(Array.isArray(result.repositories) ? result.repositories : [])
-    } catch {
-      setRepoError('Unable to reach the repository service.')
-    } finally {
-      setIsLoadingRepos(false)
-    }
-  }
-
   const handleLogout = async () => {
     if (isSupabaseConfigured) {
       const { error } = await supabase.auth.signOut()
@@ -200,55 +213,58 @@ function IndexPage() {
 
           <div className="workspace-actions">
             <div className="workspace-action-buttons">
-              <button className="add-repo-button" type="button" onClick={handleOpenRepositories}>
-                <span aria-hidden="true">＋</span> Add Repo
-              </button>
-              <button className="connect-github-button" type="button" onClick={handleConnectGitHub} disabled={isConnecting}>
-                {isConnecting ? 'Connecting...' : 'Connect GitHub'}
+              <button className={`connect-github-button${isGithubConnected ? ' is-connected' : ''}`} type="button" onClick={handleConnectGitHub} disabled={isConnecting || isGithubConnected}>
+                {isConnecting ? 'Connecting...' : isGithubConnected ? (
+                  <img src="/GitHub_Invertocat_Black.svg" alt="GitHub connected" />
+                ) : 'Connect GitHub'}
               </button>
             </div>
             {connectionError && <p className="connection-error" role="alert">{connectionError}</p>}
           </div>
         </div>
 
-        <div className="index-content" aria-label="CodeGoat workspace" />
-      </section>
-
-      {isRepoModalOpen && (
-        <div className="repo-modal-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setIsRepoModalOpen(false)
-        }}>
-          <section className="repo-modal" role="dialog" aria-modal="true" aria-labelledby="repo-modal-title">
-            <div className="repo-modal-header">
-              <div>
-                <p className="eyebrow">GitHub workspace</p>
-                <h2 id="repo-modal-title">Add a repository</h2>
-              </div>
-              <button className="modal-close-button" type="button" onClick={() => setIsRepoModalOpen(false)} aria-label="Close repository picker">×</button>
+        <div className="index-content" aria-label="CodeGoat workspace">
+          {!isGithubConnected && (
+            <div className="workspace-empty-state">
+              <p className="eyebrow">GitHub workspace</p>
+              <h1>Connect GitHub to get started</h1>
+              <p>Connect your account to see your repositories and choose where to begin.</p>
             </div>
+          )}
 
-            {isLoadingRepos && <div className="repo-state"><span className="loading-dot" aria-hidden="true" /> Loading repositories...</div>}
-            {!isLoadingRepos && repoError && <p className="repo-state repo-state-error" role="alert">{repoError}</p>}
-            {!isLoadingRepos && !repoError && repositories.length === 0 && <p className="repo-state">No repositories found for this GitHub account.</p>}
-            {!isLoadingRepos && !repoError && repositories.length > 0 && (
-              <ul className="repo-list">
-                {repositories.map((repository, index) => (
-                  <li key={repository.id ?? repository.full_name ?? repository.name ?? index}>
-                    <a className="repo-item" href={repository.html_url || '#'} target="_blank" rel="noreferrer">
-                      <span className="repo-icon" aria-hidden="true">⌁</span>
-                      <span className="repo-copy">
-                        <span className="repo-name">{repository.full_name || repository.name || 'Untitled repository'}</span>
-                        <span className="repo-description">{repository.description || 'No description provided'}</span>
-                      </span>
-                      <span className={`repo-visibility ${repository.private ? 'is-private' : ''}`}>{repository.private ? 'Private' : 'Public'}</span>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          {isGithubConnected && (
+            <div className="repository-page">
+              <div className="repository-page-header">
+                <div>
+                  <p className="eyebrow">GitHub workspace</p>
+                  <h1>Your repositories</h1>
+                </div>
+                <span className="repository-count">{repositories.length} {repositories.length === 1 ? 'repository' : 'repositories'}</span>
+              </div>
+
+              {isLoadingRepos && <div className="repo-state"><span className="loading-dot" aria-hidden="true" /> Loading repositories...</div>}
+              {!isLoadingRepos && repoError && <p className="repo-state repo-state-error" role="alert">{repoError}</p>}
+              {!isLoadingRepos && !repoError && repositories.length === 0 && <p className="repo-state">No repositories found for this GitHub account.</p>}
+              {!isLoadingRepos && !repoError && repositories.length > 0 && (
+                <ul className="repo-list">
+                  {repositories.map((repository, index) => (
+                    <li key={repository.id ?? repository.full_name ?? repository.name ?? index}>
+                      <a className="repo-item" href={repository.html_url || '#'} target="_blank" rel="noreferrer">
+                        <span className="repo-icon" aria-hidden="true">⌁</span>
+                        <span className="repo-copy">
+                          <span className="repo-name">{repository.full_name || repository.name || 'Untitled repository'}</span>
+                          <span className="repo-description">{repository.description || 'No description provided'}</span>
+                        </span>
+                        <span className={`repo-visibility ${repository.private ? 'is-private' : ''}`}>{repository.private ? 'Private' : 'Public'}</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
-      )}
+      </section>
     </main>
   )
 }
