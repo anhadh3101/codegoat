@@ -1,76 +1,17 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify'
-import type { UserIntegration } from '../types/fastify'
-
-const DEFAULT_REPOSITORY_TOOL = 'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER'
-const DEFAULT_PULL_REQUEST_TOOL = 'GITHUB_LIST_PULL_REQUESTS'
-
-type PaginatedQuery = {
-  page?: string
-  per_page?: string
-}
-
-type PullRequestParams = {
-  owner: string
-  repo: string
-}
-
-function getUserId(request: FastifyRequest): string {
-  if (!request.user?.id) {
-    throw new Error('Authenticated user is required')
-  }
-
-  return request.user.id
-}
-
-function getInteger(
-  value: string | undefined,
-  fallback: number,
-  minimum: number,
-  maximum: number
-): number {
-  const parsed = Number.parseInt(value ?? '', 10)
-  if (!Number.isInteger(parsed)) return fallback
-  return Math.min(Math.max(parsed, minimum), maximum)
-}
-
-function extractRepositories(result: unknown): unknown {
-  const data = (result as { data?: unknown })?.data ?? result
-  if (Array.isArray(data)) return data
-  if (Array.isArray((data as { items?: unknown[] })?.items)) return (data as { items: unknown[] }).items
-  if (Array.isArray((data as { repositories?: unknown[] })?.repositories)) {
-    return (data as { repositories: unknown[] }).repositories
-  }
-  if (Array.isArray((data as { response_data?: unknown[] })?.response_data)) {
-    return (data as { response_data: unknown[] }).response_data
-  }
-  return data
-}
-
-function extractPullRequests(result: unknown): unknown[] {
-  const data = (result as { data?: unknown })?.data ?? result
-  if (Array.isArray(data)) return data
-  if (Array.isArray((data as { items?: unknown[] })?.items)) return (data as { items: unknown[] }).items
-  if (Array.isArray((data as { pull_requests?: unknown[] })?.pull_requests)) {
-    return (data as { pull_requests: unknown[] }).pull_requests
-  }
-  if (Array.isArray((data as { response_data?: unknown[] })?.response_data)) {
-    return (data as { response_data: unknown[] }).response_data
-  }
-  return []
-}
-
-async function getIntegration(
-  fastify: FastifyInstance,
-  request: FastifyRequest
-): Promise<UserIntegration | null> {
-  const userId = encodeURIComponent(getUserId(request))
-  const rows = await fastify.supabaseRequest<UserIntegration[]>({
-    path: `user_integrations?select=id,composio_account_id,status&user_id=eq.${userId}&provider=eq.github&limit=1`,
-    accessToken: request.supabaseAccessToken
-  })
-
-  return rows[0] || null
-}
+import type { FastifyInstance } from 'fastify'
+import {
+  buildRepositoryTree,
+  extractPullRequest,
+  extractPullRequests,
+  extractRepositories,
+  getGithubIntegration,
+  getInteger,
+  getUserId,
+  GITHUB_TOOLS,
+  type PaginatedQuery,
+  type PullRequestDetailsParams,
+  type PullRequestParams
+} from '../utils/github'
 
 export default async function (fastify: FastifyInstance) {
   fastify.post('/api/integrations/github/connect', {
@@ -127,7 +68,7 @@ export default async function (fastify: FastifyInstance) {
     preHandler: fastify.authenticate
   }, async function (request, reply) {
     try {
-      const integration = await getIntegration(fastify, request)
+      const integration = await getGithubIntegration(fastify, request)
 
       return {
         connected: Boolean(integration),
@@ -147,7 +88,7 @@ export default async function (fastify: FastifyInstance) {
     const perPage = getInteger(request.query?.per_page, 100, 1, 100)
 
     try {
-      const integration = await getIntegration(fastify, request)
+      const integration = await getGithubIntegration(fastify, request)
 
       if (!integration || integration.status !== 'active') {
         return reply.code(409).send({
@@ -156,7 +97,7 @@ export default async function (fastify: FastifyInstance) {
         })
       }
 
-      const result = await fastify.getComposio().tools.execute(DEFAULT_REPOSITORY_TOOL, {
+      const result = await fastify.getComposio().tools.execute(GITHUB_TOOLS.listRepositories, {
         userId: getUserId(request),
         connectedAccountId: integration.composio_account_id,
         arguments: { page, per_page: perPage }
@@ -188,7 +129,7 @@ export default async function (fastify: FastifyInstance) {
     }
 
     try {
-      const integration = await getIntegration(fastify, request)
+      const integration = await getGithubIntegration(fastify, request)
 
       if (!integration || integration.status !== 'active') {
         return reply.code(409).send({
@@ -197,7 +138,7 @@ export default async function (fastify: FastifyInstance) {
         })
       }
 
-      const result = await fastify.getComposio().tools.execute(DEFAULT_PULL_REQUEST_TOOL, {
+      const result = await fastify.getComposio().tools.execute(GITHUB_TOOLS.listPullRequests, {
         userId: getUserId(request),
         connectedAccountId: integration.composio_account_id,
         arguments: { owner, repo, state: 'open', page, per_page: perPage }
@@ -211,6 +152,79 @@ export default async function (fastify: FastifyInstance) {
     } catch (error) {
       request.log.error(error, 'Failed to list GitHub pull requests')
       return reply.code(502).send({ error: 'Unable to list open pull requests' })
+    }
+  })
+
+  fastify.get<{
+    Params: PullRequestDetailsParams
+  }>('/api/repos/:owner/:repo/pulls/:number', {
+    preHandler: fastify.authenticate
+  }, async function (request, reply) {
+    const { owner, repo, number } = request.params
+
+    if (!owner || !repo) {
+      return reply.code(400).send({ error: 'Repository owner and name are required' })
+    }
+
+    if (!/^[1-9]\d*$/.test(number)) {
+      return reply.code(400).send({ error: 'Pull request number must be a positive integer' })
+    }
+
+    try {
+      const integration = await getGithubIntegration(fastify, request)
+
+      if (!integration || integration.status !== 'active') {
+        return reply.code(409).send({
+          error: 'GitHub is not connected',
+          code: 'GITHUB_CONNECTION_REQUIRED'
+        })
+      }
+
+      const result = await fastify.getComposio().tools.execute(GITHUB_TOOLS.getPullRequest, {
+        userId: getUserId(request),
+        connectedAccountId: integration.composio_account_id,
+        arguments: { owner, repo, pull_number: Number(number) }
+      })
+      const pullRequest = extractPullRequest(result) as {
+        base?: { repo?: { owner?: { login?: unknown }; name?: unknown }; sha?: unknown }
+        head?: { sha?: unknown }
+      }
+      const baseOwner = pullRequest.base?.repo?.owner?.login
+      const baseRepo = pullRequest.base?.repo?.name
+      const baseSha = pullRequest.base?.sha
+      const headSha = pullRequest.head?.sha
+
+      if (
+        typeof baseOwner !== 'string' ||
+        typeof baseRepo !== 'string' ||
+        typeof baseSha !== 'string' ||
+        typeof headSha !== 'string'
+      ) {
+        request.log.error({ pullRequest }, 'GitHub pull request response is missing base or head metadata')
+        return reply.code(502).send({ error: 'GitHub returned incomplete pull request metadata' })
+      }
+
+      const gitTreeResult = await fastify.getComposio().tools.execute(GITHUB_TOOLS.getTree, {
+        userId: getUserId(request),
+        connectedAccountId: integration.composio_account_id,
+        arguments: { owner: baseOwner, repo: baseRepo, tree_sha: baseSha, recursive: true }
+      })
+      const repositoryTree = buildRepositoryTree(gitTreeResult)
+
+      console.log('REPO TREE:', JSON.stringify(repositoryTree, null, 2))
+      return {
+        pullRequest,
+        repositoryTree: {
+          owner: baseOwner,
+          repo: baseRepo,
+          baseSha,
+          headSha,
+          ...repositoryTree
+        }
+      }
+    } catch (error) {
+      request.log.error(error, 'Failed to get GitHub pull request details')
+      return reply.code(502).send({ error: 'Unable to get pull request details' })
     }
   })
 }

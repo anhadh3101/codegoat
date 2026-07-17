@@ -263,6 +263,40 @@ function IndexPage() {
     setPullRequestError('')
   }
 
+  const handlePullRequestSelect = async (pullRequest: PullRequest) => {
+    const repositoryParts = selectedRepository ? getRepositoryParts(selectedRepository) : null
+
+    if (!repositoryParts || !pullRequest.number) {
+      console.error('Unable to identify this pull request.')
+      return
+    }
+
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      console.error('Your session has expired. Please sign in again.')
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/pulls/${pullRequest.number}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      })
+      const responseText = await response.text()
+      console.log('Pull request details raw response:', responseText)
+
+      const result = JSON.parse(responseText) as { pullRequest?: unknown; error?: string }
+
+      if (!response.ok) {
+        console.error('Unable to load pull request details:', result.error || result)
+        return
+      }
+
+      console.log('Pull request details:', JSON.stringify(result.pullRequest, null, 2))
+    } catch (error) {
+      console.error('Unable to reach the pull request details service:', error)
+    }
+  }
+
   return (
     <main className="index-page">
       <aside className="chat-sidebar" aria-label="Chat history">
@@ -348,7 +382,10 @@ function IndexPage() {
                 <ul className="repo-list pull-request-list">
                   {pullRequests.map((pullRequest, index) => (
                     <li key={pullRequest.id ?? pullRequest.number ?? index}>
-                      <a className="repo-item pull-request-item" href={pullRequest.html_url || '#'} target="_blank" rel="noreferrer">
+                      <a className="repo-item pull-request-item" href={pullRequest.html_url || '#'} target="_blank" rel="noreferrer" onClick={(event) => {
+                        event.preventDefault()
+                        void handlePullRequestSelect(pullRequest)
+                      }}>
                         <span className="pr-number">#{pullRequest.number ?? '—'}</span>
                         <span className="repo-copy">
                           <span className="repo-name">{pullRequest.title || 'Untitled pull request'}{pullRequest.draft ? <span className="draft-badge">Draft</span> : null}</span>
