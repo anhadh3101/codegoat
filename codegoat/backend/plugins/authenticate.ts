@@ -1,12 +1,12 @@
-'use strict'
+import fp from 'fastify-plugin'
+import type { FastifyReply, FastifyRequest } from 'fastify'
+import type { SupabaseUser } from '../types/fastify'
 
-const fp = require('fastify-plugin')
-
-module.exports = fp(async function (fastify) {
+export default fp(async function (fastify) {
   fastify.decorateRequest('user', null)
   fastify.decorateRequest('supabaseAccessToken', null)
 
-  fastify.decorate('authenticate', async function (request, reply) {
+  fastify.decorate('authenticate', async function (request: FastifyRequest, reply: FastifyReply) {
     const authorization = request.headers.authorization || ''
     const match = authorization.match(/^Bearer\s+(.+)$/i)
 
@@ -33,6 +33,6 @@ module.exports = fp(async function (fastify) {
     }
 
     request.supabaseAccessToken = match[1]
-    request.user = await response.json()
+    request.user = await response.json() as SupabaseUser
   })
 })

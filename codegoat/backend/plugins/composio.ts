@@ -1,16 +1,14 @@
-'use strict'
-
-const fp = require('fastify-plugin')
-const { Composio } = require('@composio/core')
+import fp from 'fastify-plugin'
+import { Composio } from '@composio/core'
 
 const GITHUB_TOOLKIT_VERSION = '20260713_00'
 
-module.exports = fp(async function (fastify) {
-  let client
+export default fp(async function (fastify) {
+  let client: Composio | undefined
 
   fastify.decorate('getComposio', function () {
     if (!process.env.COMPOSIO_API_KEY) {
-      const error = new Error('COMPOSIO_API_KEY is not configured')
+      const error = new Error('COMPOSIO_API_KEY is not configured') as Error & { statusCode?: number }
       error.statusCode = 503
       throw error
     }

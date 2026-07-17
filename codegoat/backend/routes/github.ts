@@ -1,29 +1,70 @@
-'use strict'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { UserIntegration } from '../types/fastify'
 
 const DEFAULT_REPOSITORY_TOOL = 'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER'
+const DEFAULT_PULL_REQUEST_TOOL = 'GITHUB_LIST_PULL_REQUESTS'
 
-function getUserId(request) {
+type PaginatedQuery = {
+  page?: string
+  per_page?: string
+}
+
+type PullRequestParams = {
+  owner: string
+  repo: string
+}
+
+function getUserId(request: FastifyRequest): string {
+  if (!request.user?.id) {
+    throw new Error('Authenticated user is required')
+  }
+
   return request.user.id
 }
 
-function getInteger(value, fallback, minimum, maximum) {
-  const parsed = Number.parseInt(value, 10)
+function getInteger(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number
+): number {
+  const parsed = Number.parseInt(value ?? '', 10)
   if (!Number.isInteger(parsed)) return fallback
   return Math.min(Math.max(parsed, minimum), maximum)
 }
 
-function extractRepositories(result) {
-  const data = result?.data ?? result
+function extractRepositories(result: unknown): unknown {
+  const data = (result as { data?: unknown })?.data ?? result
   if (Array.isArray(data)) return data
-  if (Array.isArray(data?.items)) return data.items
-  if (Array.isArray(data?.repositories)) return data.repositories
-  if (Array.isArray(data?.response_data)) return data.response_data
+  if (Array.isArray((data as { items?: unknown[] })?.items)) return (data as { items: unknown[] }).items
+  if (Array.isArray((data as { repositories?: unknown[] })?.repositories)) {
+    return (data as { repositories: unknown[] }).repositories
+  }
+  if (Array.isArray((data as { response_data?: unknown[] })?.response_data)) {
+    return (data as { response_data: unknown[] }).response_data
+  }
   return data
 }
 
-async function getIntegration(fastify, request) {
-  const userId = encodeURIComponent(request.user.id)
-  const rows = await fastify.supabaseRequest({
+function extractPullRequests(result: unknown): unknown[] {
+  const data = (result as { data?: unknown })?.data ?? result
+  if (Array.isArray(data)) return data
+  if (Array.isArray((data as { items?: unknown[] })?.items)) return (data as { items: unknown[] }).items
+  if (Array.isArray((data as { pull_requests?: unknown[] })?.pull_requests)) {
+    return (data as { pull_requests: unknown[] }).pull_requests
+  }
+  if (Array.isArray((data as { response_data?: unknown[] })?.response_data)) {
+    return (data as { response_data: unknown[] }).response_data
+  }
+  return []
+}
+
+async function getIntegration(
+  fastify: FastifyInstance,
+  request: FastifyRequest
+): Promise<UserIntegration | null> {
+  const userId = encodeURIComponent(getUserId(request))
+  const rows = await fastify.supabaseRequest<UserIntegration[]>({
     path: `user_integrations?select=id,composio_account_id,status&user_id=eq.${userId}&provider=eq.github&limit=1`,
     accessToken: request.supabaseAccessToken
   })
@@ -31,7 +72,7 @@ async function getIntegration(fastify, request) {
   return rows[0] || null
 }
 
-module.exports = async function (fastify) {
+export default async function (fastify: FastifyInstance) {
   fastify.post('/api/integrations/github/connect', {
     preHandler: fastify.authenticate
   }, async function (request, reply) {
@@ -99,7 +140,7 @@ module.exports = async function (fastify) {
     }
   })
 
-  fastify.get('/api/repos', {
+  fastify.get<{ Querystring: PaginatedQuery }>('/api/repos', {
     preHandler: fastify.authenticate
   }, async function (request, reply) {
     const page = getInteger(request.query?.page, 1, 1, 10000)
@@ -129,6 +170,47 @@ module.exports = async function (fastify) {
     } catch (error) {
       request.log.error(error, 'Failed to list GitHub repositories')
       return reply.code(502).send({ error: 'Unable to list GitHub repositories' })
+    }
+  })
+
+  fastify.get<{
+    Params: PullRequestParams
+    Querystring: PaginatedQuery
+  }>('/api/repos/:owner/:repo/pulls', {
+    preHandler: fastify.authenticate
+  }, async function (request, reply) {
+    const { owner, repo } = request.params
+    const page = getInteger(request.query?.page, 1, 1, 10000)
+    const perPage = getInteger(request.query?.per_page, 100, 1, 100)
+
+    if (!owner || !repo) {
+      return reply.code(400).send({ error: 'Repository owner and name are required' })
+    }
+
+    try {
+      const integration = await getIntegration(fastify, request)
+
+      if (!integration || integration.status !== 'active') {
+        return reply.code(409).send({
+          error: 'GitHub is not connected',
+          code: 'GITHUB_CONNECTION_REQUIRED'
+        })
+      }
+
+      const result = await fastify.getComposio().tools.execute(DEFAULT_PULL_REQUEST_TOOL, {
+        userId: getUserId(request),
+        connectedAccountId: integration.composio_account_id,
+        arguments: { owner, repo, state: 'open', page, per_page: perPage }
+      })
+
+      return {
+        pullRequests: extractPullRequests(result),
+        page,
+        perPage
+      }
+    } catch (error) {
+      request.log.error(error, 'Failed to list GitHub pull requests')
+      return reply.code(502).send({ error: 'Unable to list open pull requests' })
     }
   })
 }

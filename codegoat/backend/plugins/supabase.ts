@@ -1,19 +1,23 @@
-'use strict'
+import fp from 'fastify-plugin'
+import type { SupabaseRequestOptions } from '../types/fastify'
 
-const fp = require('fastify-plugin')
-
-module.exports = fp(async function (fastify) {
-  fastify.decorate('supabaseRequest', async function ({ method = 'GET', path, accessToken, body }) {
+export default fp(async function (fastify) {
+  fastify.decorate('supabaseRequest', async function <T = unknown>({
+    method = 'GET',
+    path,
+    accessToken,
+    body
+  }: SupabaseRequestOptions): Promise<T> {
     const supabaseUrl = process.env.SUPABASE_URL
     const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY
 
     if (!supabaseUrl || !supabaseKey) {
-      const error = new Error('Supabase server configuration is incomplete')
+      const error = new Error('Supabase server configuration is incomplete') as Error & { statusCode?: number }
       error.statusCode = 503
       throw error
     }
 
-    const headers = {
+    const headers: Record<string, string> = {
       apikey: supabaseKey,
       Authorization: `Bearer ${accessToken || supabaseKey}`,
       Accept: 'application/json'
@@ -31,15 +35,18 @@ module.exports = fp(async function (fastify) {
     })
 
     const text = await response.text()
-    const data = text ? JSON.parse(text) : null
+    const data = text ? JSON.parse(text) as T : null
 
     if (!response.ok) {
-      const error = new Error('Supabase database request failed')
+      const error = new Error('Supabase database request failed') as Error & {
+        statusCode?: number
+        details?: unknown
+      }
       error.statusCode = response.status
       error.details = data
       throw error
     }
 
-    return data
+    return data as T
   })
 })

@@ -16,6 +16,17 @@ type Repository = {
   updated_at?: string
 }
 
+type PullRequest = {
+  id?: number | string
+  number?: number
+  title?: string
+  body?: string | null
+  user?: { login?: string; avatar_url?: string }
+  html_url?: string
+  updated_at?: string
+  draft?: boolean
+}
+
 function SignInPage() {
   const [mode, setMode] = useState<AuthMode>('sign-in')
   const [email, setEmail] = useState('')
@@ -107,6 +118,10 @@ function IndexPage() {
   const [isLoadingRepos, setIsLoadingRepos] = useState(false)
   const [repositories, setRepositories] = useState<Repository[]>([])
   const [repoError, setRepoError] = useState('')
+  const [selectedRepository, setSelectedRepository] = useState<Repository | null>(null)
+  const [pullRequests, setPullRequests] = useState<PullRequest[]>([])
+  const [isLoadingPullRequests, setIsLoadingPullRequests] = useState(false)
+  const [pullRequestError, setPullRequestError] = useState('')
 
   useEffect(() => {
     const loadGithubStatus = async () => {
@@ -197,6 +212,57 @@ function IndexPage() {
     window.location.assign('/signin')
   }
 
+  const getRepositoryParts = (repository: Repository) => {
+    const fullName = repository.full_name || repository.name || ''
+    const [owner, repo] = fullName.split('/')
+    return owner && repo ? { owner, repo } : null
+  }
+
+  const handleRepositorySelect = async (repository: Repository) => {
+    const repositoryParts = getRepositoryParts(repository)
+
+    if (!repositoryParts) {
+      setRepoError('Unable to identify this repository.')
+      return
+    }
+
+    setSelectedRepository(repository)
+    setPullRequests([])
+    setPullRequestError('')
+    setIsLoadingPullRequests(true)
+
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      setPullRequestError('Your session has expired. Please sign in again.')
+      setIsLoadingPullRequests(false)
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/pulls`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      })
+      const result = await response.json()
+
+      if (!response.ok) {
+        setPullRequestError(result.error || 'Unable to load pull requests.')
+        return
+      }
+
+      setPullRequests(Array.isArray(result.pullRequests) ? result.pullRequests : [])
+    } catch {
+      setPullRequestError('Unable to reach the pull request service.')
+    } finally {
+      setIsLoadingPullRequests(false)
+    }
+  }
+
+  const handleBackToRepositories = () => {
+    setSelectedRepository(null)
+    setPullRequests([])
+    setPullRequestError('')
+  }
+
   return (
     <main className="index-page">
       <aside className="chat-sidebar" aria-label="Chat history">
@@ -232,7 +298,7 @@ function IndexPage() {
             </div>
           )}
 
-          {isGithubConnected && (
+          {isGithubConnected && !selectedRepository && (
             <div className="repository-page">
               <div className="repository-page-header">
                 <div>
@@ -249,13 +315,46 @@ function IndexPage() {
                 <ul className="repo-list">
                   {repositories.map((repository, index) => (
                     <li key={repository.id ?? repository.full_name ?? repository.name ?? index}>
-                      <a className="repo-item" href={repository.html_url || '#'} target="_blank" rel="noreferrer">
+                      <button className="repo-item repo-select-button" type="button" onClick={() => void handleRepositorySelect(repository)}>
                         <span className="repo-icon" aria-hidden="true">⌁</span>
                         <span className="repo-copy">
                           <span className="repo-name">{repository.full_name || repository.name || 'Untitled repository'}</span>
                           <span className="repo-description">{repository.description || 'No description provided'}</span>
                         </span>
-                        <span className={`repo-visibility ${repository.private ? 'is-private' : ''}`}>{repository.private ? 'Private' : 'Public'}</span>
+                        <span className="repo-select-affordance" aria-hidden="true">View PRs →</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {isGithubConnected && selectedRepository && (
+            <div className="repository-page pull-request-page">
+              <button className="back-button" type="button" onClick={handleBackToRepositories}>← All repositories</button>
+              <div className="repository-page-header">
+                <div>
+                  <p className="eyebrow">Configuration · Pull requests</p>
+                  <h1>{selectedRepository.full_name || selectedRepository.name || 'Repository'}</h1>
+                </div>
+                {!isLoadingPullRequests && !pullRequestError && <span className="repository-count">{pullRequests.length} active {pullRequests.length === 1 ? 'PR' : 'PRs'}</span>}
+              </div>
+
+              {isLoadingPullRequests && <div className="repo-state"><span className="loading-dot" aria-hidden="true" /> Loading active pull requests...</div>}
+              {!isLoadingPullRequests && pullRequestError && <p className="repo-state repo-state-error" role="alert">{pullRequestError}</p>}
+              {!isLoadingPullRequests && !pullRequestError && pullRequests.length === 0 && <p className="repo-state">No active pull requests in this repository.</p>}
+              {!isLoadingPullRequests && !pullRequestError && pullRequests.length > 0 && (
+                <ul className="repo-list pull-request-list">
+                  {pullRequests.map((pullRequest, index) => (
+                    <li key={pullRequest.id ?? pullRequest.number ?? index}>
+                      <a className="repo-item pull-request-item" href={pullRequest.html_url || '#'} target="_blank" rel="noreferrer">
+                        <span className="pr-number">#{pullRequest.number ?? '—'}</span>
+                        <span className="repo-copy">
+                          <span className="repo-name">{pullRequest.title || 'Untitled pull request'}{pullRequest.draft ? <span className="draft-badge">Draft</span> : null}</span>
+                          <span className="repo-description">{pullRequest.user?.login ? `Opened by ${pullRequest.user.login}` : 'Open pull request'}</span>
+                        </span>
+                        <span className="repo-select-affordance" aria-hidden="true">Open ↗</span>
                       </a>
                     </li>
                   ))}

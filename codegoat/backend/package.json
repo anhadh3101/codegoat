@@ -2,14 +2,16 @@
   "name": "backend",
   "version": "1.0.0",
   "description": "This project was bootstrapped with Fastify-CLI.",
-  "main": "app.js",
+  "main": "dist/app.js",
   "directories": {
     "test": "test"
   },
   "scripts": {
-    "test": "node --test test/**/*.test.js",
-    "start": "fastify start -l info app.js",
-    "dev": "fastify start -w -l info -P app.js"
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
+    "start": "fastify start -l info dist/app.js",
+    "dev": "tsx watch ./node_modules/fastify-cli/cli.js start -w -l info -P app.ts"
   },
   "keywords": [],
   "author": "",
@@ -21,5 +23,10 @@
     "fastify": "^5.0.0",
     "fastify-cli": "^7.4.1",
     "fastify-plugin": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.1",
+    "typescript": "^5.8.3"
   }
 }

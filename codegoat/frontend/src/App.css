@@ -146,6 +146,16 @@
 .repository-count { color: var(--subtle); font-size: 12px; }
 .repository-page .repo-list { max-height: none; padding: 12px 0 0; }
 .repository-page .repo-item { padding: 14px 12px; }
+.repo-select-button { width: 100%; border: 1px solid transparent; cursor: pointer; text-align: left; background: transparent; font-family: inherit; }
+.repo-select-affordance { margin-left: auto; color: var(--subtle); font-size: 12px; white-space: nowrap; }
+.repo-select-button:hover .repo-select-affordance { color: var(--text); }
+.back-button { margin: 0 0 28px; border: 0; padding: 0; color: var(--muted); background: transparent; font-size: 12px; font-weight: 600; }
+.back-button:hover { color: var(--text); text-decoration: underline; }
+.pull-request-page .repository-page-header { padding-bottom: 20px; }
+.pull-request-list { padding-top: 12px; }
+.pull-request-item { min-height: 63px; }
+.pr-number { flex: 0 0 42px; color: var(--subtle); font-size: 12px; font-weight: 600; }
+.draft-badge { display: inline-block; margin-left: 8px; border: 1px solid var(--border-strong); border-radius: 999px; padding: 2px 6px; color: var(--muted); font-size: 10px; font-weight: 500; letter-spacing: .02em; vertical-align: 1px; }
 
 button:focus-visible,
 input:focus-visible,
