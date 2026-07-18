@@ -1,39 +1,14 @@
 import type { FastifyInstance } from 'fastify'
-import type OpenAI from 'openai'
 import { z } from 'zod'
 import { OPENROUTER_MODEL } from '../../plugins/openai'
 import { GITHUB_TOOLS, type RepositoryTreeNode } from '../../utils/github'
 import {
-  BlobDecisionSchema,
   RepositoryBriefSchema,
   type RepositoryBrief
 } from './schema'
+import { getFileSkipReason } from './file-filter'
 
 const DEFAULT_MAX_FILE_SIZE_BYTES = 100_000
-
-export const DECIDE_BLOB_ACCESS_TOOL: OpenAI.Chat.Completions.ChatCompletionTool = {
-  type: 'function',
-  function: {
-    name: 'decide_blob_access',
-    description: 'Decide whether the current file content is necessary for a repository snapshot.',
-    parameters: {
-      type: 'object',
-      properties: {
-        action: {
-          type: 'string',
-          enum: ['fetch', 'skip'],
-          description: 'Fetch the current file blob or skip this file.'
-        },
-        reason: {
-          type: 'string',
-          description: 'A short explanation for the decision.'
-        }
-      },
-      required: ['action', 'reason'],
-      additionalProperties: false
-    }
-  }
-}
 
 export type GenerateFileBriefOptions = {
   fastify: FastifyInstance
@@ -106,8 +81,8 @@ type GitBlob = {
   encoding?: unknown
 }
 
-function createSkippedFileBrief(path: string, reason: string): string {
-  return `## Summary\nSkipped ${path}.\n\n## Responsibilities\n- None; this file was not analyzed.\n\n## Key Symbols\n- None.\n\n## Dependencies\n- None available.\n\n## Observations\n- ${reason}\n\n## Findings\n- [info] File not analyzed — ${reason}. Evidence: ${path}`
+export function createSkippedFileBrief(path: string, reason: string): string {
+  return `## Kind\nskipped-file\n\n## Summary\nSkipped ${path}.\n\n## Responsibilities\n- None; this file was not analyzed.\n\n## Key Symbols\n- None.\n\n## Dependencies\n- None available.\n\n## Observations\n- ${reason}\n\n## Findings\n- [info] File not analyzed — ${reason}. Evidence: ${path}`
 }
 
 function extractBlob(result: unknown): GitBlob {
@@ -152,55 +127,16 @@ export async function generateFileBrief({
     throw new Error(`Cannot generate a file brief for non-file node: ${node.path}`)
   }
 
+  const skipReason = getFileSkipReason(node, maxFileSizeBytes)
+  if (skipReason) {
+    return createSkippedFileBrief(node.path, skipReason)
+  }
+
   if (!node.sha) {
     return createSkippedFileBrief(node.path, 'The file does not have a Git blob SHA.')
   }
 
-  if (typeof node.size === 'number' && node.size > maxFileSizeBytes) {
-    return createSkippedFileBrief(node.path, `The file exceeds the ${maxFileSizeBytes}-byte limit.`)
-  }
-
   const client = fastify.getOpenAI()
-  const decisionResponse = await client.chat.completions.create({
-    model: OPENROUTER_MODEL,
-    messages: [
-      {
-        role: 'system',
-        content: 'You decide whether file content is necessary for a repository snapshot. Use the required tool exactly once. Fetch source, configuration, documentation, or other files that materially explain the repository. Skip files that are unlikely to add useful context.'
-      },
-      {
-        role: 'user',
-        content: JSON.stringify({
-          path: node.path,
-          size: node.size ?? null,
-          type: node.type,
-          repositoryContext: repositoryContext ?? null
-        })
-      }
-    ],
-    tools: [DECIDE_BLOB_ACCESS_TOOL],
-    tool_choice: {
-      type: 'function',
-      function: { name: 'decide_blob_access' }
-    },
-    parallel_tool_calls: false
-  })
-
-  const toolCall = decisionResponse.choices[0]?.message.tool_calls?.find(
-    (call): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => (
-      call.type === 'function' && call.function.name === 'decide_blob_access'
-    )
-  )
-
-  if (!toolCall) {
-    throw new Error('The model did not return a blob access decision')
-  }
-
-  const decision = BlobDecisionSchema.parse(JSON.parse(toolCall.function.arguments))
-
-  if (decision.action === 'skip') {
-    return createSkippedFileBrief(node.path, decision.reason)
-  }
 
   let content: string
   try {

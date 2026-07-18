@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 import fp from 'fastify-plugin'
 
-export const OPENROUTER_MODEL = 'openai/gpt-oss-120b'
+export const OPENROUTER_MODEL = 'openai/gpt-5-mini'
 
 export default fp(async function (fastify) {
   let client: OpenAI | undefined

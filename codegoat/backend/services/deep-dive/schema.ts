@@ -9,11 +9,6 @@ export const BriefFindingSchema = z.object({
   evidencePaths: z.array(z.string())
 })
 
-export const BlobDecisionSchema = z.object({
-  action: z.enum(['fetch', 'skip']),
-  reason: z.string()
-})
-
 export const RepositoryBriefSchema = z.object({
   kind: z.literal('repository'),
   path: z.literal(''),
@@ -28,5 +23,4 @@ export const RepositoryBriefSchema = z.object({
 })
 
 export type BriefFinding = z.infer<typeof BriefFindingSchema>
-export type BlobDecision = z.infer<typeof BlobDecisionSchema>
 export type RepositoryBrief = z.infer<typeof RepositoryBriefSchema>

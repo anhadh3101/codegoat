@@ -1,11 +1,13 @@
 import type { FastifyInstance } from 'fastify'
 import type { RepositoryTreeNode } from '../../utils/github'
 import {
+  createSkippedFileBrief,
   generateDirectoryBrief,
   generateFileBrief,
   generateRepositoryBrief
 } from './generate-brief'
 import type { RepositoryBrief } from './schema'
+import { getFileSkipReason } from './file-filter'
 
 const DEFAULT_CONCURRENCY = 5
 
@@ -59,6 +61,16 @@ export async function analyzeNode(
   node: RepositoryTreeNode,
   context: RlmContext
 ): Promise<TreeBrief> {
+  const skipReason = getFileSkipReason(
+    node,
+    context.maxFileSizeBytes ?? 100_000
+  )
+  if (skipReason) {
+    const brief = createSkippedFileBrief(node.path, skipReason)
+    printBrief(node.type === 'tree' ? 'directory' : 'file', node.path, brief)
+    return brief
+  }
+
   if (node.type === 'blob') {
     const brief = await generateFileBrief({
       fastify: context.fastify,
@@ -76,7 +88,9 @@ export async function analyzeNode(
   }
 
   if (node.type !== 'tree') {
-    return `## Summary\nSkipped ${node.path}.\n\n## Responsibilities\n- None; unsupported Git tree node type.\n\n## Key Symbols\n- None.\n\n## Dependencies\n- None available.\n\n## Observations\n- Node type: ${node.type}\n\n## Findings\n- [info] Unsupported node — This node was not analyzed. Evidence: ${node.path}`
+    const brief = createSkippedFileBrief(node.path, `Unsupported Git tree node type: ${node.type}`)
+    printBrief('node', node.path, brief)
+    return brief
   }
 
   const childBriefs = await mapWithConcurrency(
