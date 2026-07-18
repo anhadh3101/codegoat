@@ -5,7 +5,8 @@ export const GITHUB_TOOLS = {
   listRepositories: 'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER',
   listPullRequests: 'GITHUB_LIST_PULL_REQUESTS',
   getPullRequest: 'GITHUB_GET_A_PULL_REQUEST',
-  getTree: 'GITHUB_GET_A_TREE'
+  getTree: 'GITHUB_GET_A_TREE',
+  getBlob: 'GITHUB_GET_A_BLOB'
 } as const
 
 export type PaginatedQuery = {

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { analyzeRepository } from '../services/deep-dive/rlm'
 import {
   buildRepositoryTree,
   extractPullRequest,
@@ -212,6 +213,19 @@ export default async function (fastify: FastifyInstance) {
       const repositoryTree = buildRepositoryTree(gitTreeResult)
 
       console.log('REPO TREE:', JSON.stringify(repositoryTree, null, 2))
+      console.log('[RLM] Starting base-branch repository analysis')
+      const repositoryBrief = await analyzeRepository({
+        tree: repositoryTree.tree,
+        fastify,
+        userId: getUserId(request),
+        connectedAccountId: integration.composio_account_id,
+        owner: baseOwner,
+        repo: baseRepo,
+        commitSha: baseSha,
+        repositoryContext: `Base branch snapshot for pull request #${number}`
+      })
+      console.log('[RLM] Base-branch repository analysis complete')
+
       return {
         pullRequest,
         repositoryTree: {
@@ -220,7 +234,8 @@ export default async function (fastify: FastifyInstance) {
           baseSha,
           headSha,
           ...repositoryTree
-        }
+        },
+        repositoryBrief
       }
     } catch (error) {
       request.log.error(error, 'Failed to get GitHub pull request details')

@@ -1,4 +1,5 @@
 import type { Composio } from '@composio/core'
+import type OpenAI from 'openai'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
 export interface SupabaseUser {
@@ -24,6 +25,7 @@ declare module 'fastify' {
   interface FastifyInstance {
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>
     getComposio: () => Composio
+    getOpenAI: () => OpenAI
     someSupport: () => string
     supabaseRequest: <T = unknown>(options: SupabaseRequestOptions) => Promise<T>
   }

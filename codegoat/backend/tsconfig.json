@@ -18,7 +18,8 @@
     "app.ts",
     "types/**/*.ts",
     "plugins/**/*.ts",
-    "routes/**/*.ts"
+    "routes/**/*.ts",
+    "services/**/*.ts"
   ],
   "exclude": [
     "dist",
