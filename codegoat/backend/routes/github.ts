@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { analyzeRepository } from '../services/deep-dive/rlm'
+import { BriefBatchWriter } from '../services/deep-dive/brief-store'
 import {
   buildRepositoryTree,
   extractPullRequest,
@@ -181,23 +182,27 @@ export default async function (fastify: FastifyInstance) {
         })
       }
 
+      const userId = getUserId(request)
       const result = await fastify.getComposio().tools.execute(GITHUB_TOOLS.getPullRequest, {
-        userId: getUserId(request),
+        userId,
         connectedAccountId: integration.composio_account_id,
         arguments: { owner, repo, pull_number: Number(number) }
       })
       const pullRequest = extractPullRequest(result) as {
-        base?: { repo?: { owner?: { login?: unknown }; name?: unknown }; sha?: unknown }
+        base?: { repo?: { id?: unknown; owner?: { login?: unknown }; name?: unknown }; sha?: unknown }
         head?: { sha?: unknown }
       }
       const baseOwner = pullRequest.base?.repo?.owner?.login
       const baseRepo = pullRequest.base?.repo?.name
+      const baseRepositoryId = pullRequest.base?.repo?.id
       const baseSha = pullRequest.base?.sha
       const headSha = pullRequest.head?.sha
 
       if (
         typeof baseOwner !== 'string' ||
         typeof baseRepo !== 'string' ||
+        typeof baseRepositoryId !== 'number' ||
+        !Number.isSafeInteger(baseRepositoryId) ||
         typeof baseSha !== 'string' ||
         typeof headSha !== 'string'
       ) {
@@ -206,25 +211,64 @@ export default async function (fastify: FastifyInstance) {
       }
 
       const gitTreeResult = await fastify.getComposio().tools.execute(GITHUB_TOOLS.getTree, {
-        userId: getUserId(request),
+        userId,
         connectedAccountId: integration.composio_account_id,
         arguments: { owner: baseOwner, repo: baseRepo, tree_sha: baseSha, recursive: true }
       })
       const repositoryTree = buildRepositoryTree(gitTreeResult)
+      const repositoryUrl = `https://github.com/${baseOwner}/${baseRepo}`
+      const existingAnalyses = await fastify.supabaseRequest<{ id: number }[]>({
+        path: `repository_analyses?select=id&user_id=eq.${encodeURIComponent(userId)}&repository_url=eq.${encodeURIComponent(repositoryUrl)}&base_sha=eq.${encodeURIComponent(baseSha)}&limit=1`,
+        accessToken: request.supabaseAccessToken
+      })
+      const briefsAlreadyExist = existingAnalyses.length > 0
 
       console.log('REPO TREE:', JSON.stringify(repositoryTree, null, 2))
-      console.log('[RLM] Starting base-branch repository analysis')
-      const repositoryBrief = await analyzeRepository({
-        tree: repositoryTree.tree,
-        fastify,
-        userId: getUserId(request),
-        connectedAccountId: integration.composio_account_id,
-        owner: baseOwner,
-        repo: baseRepo,
-        commitSha: baseSha,
-        repositoryContext: `Base branch snapshot for pull request #${number}`
-      })
-      console.log('[RLM] Base-branch repository analysis complete')
+      let repositoryBrief = null
+      if (!briefsAlreadyExist) {
+        const analysisRows = await fastify.supabaseRequest<{ id: number }[]>({
+          method: 'POST',
+          path: 'repository_analyses',
+          accessToken: request.supabaseAccessToken,
+          body: {
+            user_id: userId,
+            provider: 'github',
+            provider_repository_id: baseRepositoryId,
+            repository_owner: baseOwner,
+            repository_name: baseRepo,
+            repository_url: repositoryUrl,
+            base_sha: baseSha,
+            generator_version: 'rlm-v1'
+          }
+        })
+        const analysisId = analysisRows[0]?.id
+        if (!analysisId) throw new Error('Supabase did not return the repository analysis id')
+
+        const briefWriter = new BriefBatchWriter({
+          fastify,
+          accessToken: request.supabaseAccessToken,
+          analysisId
+        })
+
+        repositoryBrief = await analyzeRepository({
+          tree: repositoryTree.tree,
+          fastify,
+          userId,
+          connectedAccountId: integration.composio_account_id,
+          owner: baseOwner,
+          repo: baseRepo,
+          commitSha: baseSha,
+          repositoryContext: 'Base branch snapshot',
+          onBrief: (brief) => briefWriter.enqueue({ ...brief, user_id: userId })
+        })
+        await briefWriter.flush()
+      }
+
+      console.log(
+        briefsAlreadyExist
+          ? `[RLM] Skipping base-branch repository analysis; briefs already exist for ${baseOwner}/${baseRepo}@${baseSha}`
+          : '[RLM] Base-branch repository analysis complete'
+      )
 
       return {
         pullRequest,

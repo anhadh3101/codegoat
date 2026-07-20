@@ -1,31 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
+import { AnalysisLoadingPage } from './components/AnalysisLoadingPage'
+import { ChatPage } from './components/ChatPage'
+import type { ChatScope, ConversationDetail, ConversationMessage, ConversationSummary, PullRequest, PullRequestDetails, Repository } from './types'
 import './App.css'
 
 type AuthMode = 'sign-in' | 'sign-up'
 
-type Repository = {
-  id?: number | string
-  name?: string
-  full_name?: string
-  description?: string | null
-  private?: boolean
-  language?: string | null
-  html_url?: string
-  updated_at?: string
-}
-
-type PullRequest = {
-  id?: number | string
-  number?: number
-  title?: string
-  body?: string | null
-  user?: { login?: string; avatar_url?: string }
-  html_url?: string
-  updated_at?: string
-  draft?: boolean
-}
+type WorkspaceStage = 'browse' | 'analyzing' | 'chat'
 
 function SignInPage() {
   const [mode, setMode] = useState<AuthMode>('sign-in')
@@ -122,10 +105,42 @@ function IndexPage() {
   const [pullRequests, setPullRequests] = useState<PullRequest[]>([])
   const [isLoadingPullRequests, setIsLoadingPullRequests] = useState(false)
   const [pullRequestError, setPullRequestError] = useState('')
+  const [workspaceStage, setWorkspaceStage] = useState<WorkspaceStage>('browse')
+  const [activePullRequest, setActivePullRequest] = useState<PullRequest | null>(null)
+  const [chatScope, setChatScope] = useState<ChatScope | null>(null)
+  const [conversations, setConversations] = useState<ConversationSummary[]>([])
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false)
+  const [isLoadingConversation, setIsLoadingConversation] = useState(false)
+  const [chatMessages, setChatMessages] = useState<ConversationMessage[]>([])
+  const [conversationLoadVersion, setConversationLoadVersion] = useState(0)
+
+  const loadConversations = async () => {
+    if (!isSupabaseConfigured) return
+
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return
+
+    setIsLoadingConversations(true)
+    try {
+      const conversationsResponse = await fetch('/api/agent/conversations', {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      })
+      const conversationsResult = await conversationsResponse.json() as { conversations?: ConversationSummary[] }
+      if (conversationsResponse.ok) {
+        setConversations(Array.isArray(conversationsResult.conversations) ? conversationsResult.conversations : [])
+      }
+    } catch {
+      // Conversation history is secondary to the repository workspace.
+    } finally {
+      setIsLoadingConversations(false)
+    }
+  }
 
   useEffect(() => {
     const loadGithubStatus = async () => {
       if (!isSupabaseConfigured) return
+
+      await loadConversations()
 
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
@@ -212,6 +227,63 @@ function IndexPage() {
     window.location.assign('/signin')
   }
 
+  const handleConversationSelect = async (conversation: ConversationSummary) => {
+    setIsLoadingConversation(true)
+    const summaryScope = conversation.state
+
+    setSelectedRepository({
+      id: summaryScope.repository.id,
+      name: summaryScope.repository.name,
+      full_name: summaryScope.repository.fullName,
+      html_url: summaryScope.repository.url
+    })
+    setActivePullRequest({
+      id: summaryScope.pullRequest.id,
+      number: summaryScope.pullRequest.number,
+      title: summaryScope.pullRequest.title,
+      html_url: summaryScope.pullRequest.url
+    })
+    setChatScope(summaryScope)
+    setChatMessages([])
+    setWorkspaceStage('chat')
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const response = await fetch(`/api/agent/conversations/${encodeURIComponent(conversation.id)}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      })
+      const result = await response.json() as { conversation?: ConversationDetail; error?: string }
+      if (!response.ok || !result.conversation) {
+        console.error(result.error || 'Unable to load conversation.')
+        return
+      }
+
+      const scope = result.conversation.state
+      setSelectedRepository({
+        id: scope.repository.id,
+        name: scope.repository.name,
+        full_name: scope.repository.fullName,
+        html_url: scope.repository.url
+      })
+      setActivePullRequest({
+        id: scope.pullRequest.id,
+        number: scope.pullRequest.number,
+        title: scope.pullRequest.title,
+        html_url: scope.pullRequest.url
+      })
+      setChatScope(scope)
+      setChatScope(scope)
+      setChatMessages(result.conversation.messages)
+      setConversationLoadVersion((version) => version + 1)
+    } catch (error) {
+      console.error('Unable to load conversation:', error)
+    } finally {
+      setIsLoadingConversation(false)
+    }
+  }
+
   const getRepositoryParts = (repository: Repository) => {
     const fullName = repository.full_name || repository.name || ''
     const [owner, repo] = fullName.split('/')
@@ -227,6 +299,10 @@ function IndexPage() {
     }
 
     setSelectedRepository(repository)
+    setWorkspaceStage('browse')
+    setActivePullRequest(null)
+    setChatScope(null)
+    setChatMessages([])
     setPullRequests([])
     setPullRequestError('')
     setIsLoadingPullRequests(true)
@@ -258,9 +334,20 @@ function IndexPage() {
   }
 
   const handleBackToRepositories = () => {
+    setWorkspaceStage('browse')
     setSelectedRepository(null)
+    setActivePullRequest(null)
+    setChatScope(null)
+    setChatMessages([])
     setPullRequests([])
     setPullRequestError('')
+  }
+
+  const handleBackToPullRequests = () => {
+    setWorkspaceStage('browse')
+    setActivePullRequest(null)
+    setChatScope(null)
+    setChatMessages([])
   }
 
   const handlePullRequestSelect = async (pullRequest: PullRequest) => {
@@ -277,6 +364,9 @@ function IndexPage() {
       return
     }
 
+    setActivePullRequest(pullRequest)
+    setWorkspaceStage('analyzing')
+
     try {
       const response = await fetch(`/api/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/pulls/${pullRequest.number}`, {
         headers: { Authorization: `Bearer ${session.access_token}` }
@@ -284,35 +374,116 @@ function IndexPage() {
       const responseText = await response.text()
       console.log('Pull request details raw response:', responseText)
 
-      const result = JSON.parse(responseText) as { pullRequest?: unknown; error?: string }
+      const result = JSON.parse(responseText) as { pullRequest?: PullRequestDetails; error?: string }
 
       if (!response.ok) {
         console.error('Unable to load pull request details:', result.error || result)
+        setWorkspaceStage('browse')
         return
       }
 
       console.log('Pull request details:', JSON.stringify(result.pullRequest, null, 2))
+      const details = result.pullRequest
+      const baseOwner = details?.base?.repo?.owner?.login ?? repositoryParts.owner
+      const baseRepository = details?.base?.repo?.name ?? repositoryParts.repo
+      const incomingOwner = details?.head?.repo?.owner?.login ?? baseOwner
+      const incomingRepository = details?.head?.repo?.name ?? baseRepository
+      const baseBranch = details?.base?.ref
+      const baseSha = details?.base?.sha
+      const incomingBranch = details?.head?.ref
+      const incomingSha = details?.head?.sha
+
+      if (!baseBranch || !baseSha || !incomingBranch || !incomingSha) {
+        console.error('Pull request details are missing branch metadata:', details)
+        setWorkspaceStage('browse')
+        return
+      }
+
+      setChatScope({
+        chatId: crypto.randomUUID(),
+        repository: {
+          id: details?.base?.repo?.id ?? selectedRepository?.id,
+          owner: baseOwner,
+          name: baseRepository,
+          fullName: `${baseOwner}/${baseRepository}`,
+          url: details?.base?.repo?.html_url ?? selectedRepository?.html_url
+        },
+        pullRequest: {
+          id: details?.id ?? pullRequest.id,
+          number: pullRequest.number,
+          title: details?.title ?? pullRequest.title,
+          url: details?.html_url ?? pullRequest.html_url,
+          base: {
+            owner: baseOwner,
+            repository: baseRepository,
+            branch: baseBranch,
+            sha: baseSha
+          },
+          incoming: {
+            owner: incomingOwner,
+            repository: incomingRepository,
+            branch: incomingBranch,
+            sha: incomingSha
+          }
+        }
+      })
+      setChatMessages([])
+      setWorkspaceStage('chat')
     } catch (error) {
       console.error('Unable to reach the pull request details service:', error)
+      setWorkspaceStage('browse')
     }
   }
 
   return (
     <main className="index-page">
       <aside className="chat-sidebar" aria-label="Chat history">
-        <div className="chat-list" aria-label="Saved chats" />
+        <a className="workspace-brand" href="/" aria-label="CodeGoat home">
+          <span>Code</span><span>Goat</span>
+        </a>
 
-        <button className="logout-button" type="button" onClick={handleLogout}>Log out</button>
+        <div className="chat-list" aria-label="Saved chats">
+          <p className="chat-list-label">Conversations</p>
+          {isLoadingConversations && <p className="chat-list-state">Loading…</p>}
+          {!isLoadingConversations && conversations.length === 0 && <p className="chat-list-state">No conversations yet.</p>}
+          {!isLoadingConversations && conversations.map((conversation) => {
+            const scope = conversation.state
+            const repository = scope?.repository?.fullName || 'Repository'
+            const pullRequest = scope?.pullRequest
+            const title = conversation.title || 'Conversation'
+
+            return (
+              <button className="chat-list-item" key={conversation.id} type="button" onClick={() => void handleConversationSelect(conversation)} disabled={isLoadingConversation}>
+                <span className="chat-list-item-title">{title}</span>
+                <span className="chat-list-item-context">{repository} · #{pullRequest?.number ?? '—'}</span>
+              </button>
+            )
+          })}
+        </div>
+
+        <button className="logout-button" type="button" onClick={handleLogout} aria-label="Sign out" title="Sign out">
+          <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <path d="m16 17 5-5-5-5" />
+            <path d="M21 12H9" />
+          </svg>
+        </button>
       </aside>
 
       <section className="workspace-shell" aria-label="Workspace">
         <div className="workspace-header">
-          <a className="workspace-brand" href="/" aria-label="CodeGoat home">
-            <span>Code</span><span>Goat</span>
-          </a>
-
           <div className="workspace-actions">
-            <div className="workspace-action-buttons">
+            <div className={`workspace-action-buttons${workspaceStage === 'chat' || (workspaceStage === 'browse' && selectedRepository) ? ' has-back' : ''}`}>
+              {workspaceStage === 'chat' && (
+                <button className="back-button workspace-back-button" type="button" onClick={handleBackToPullRequests}>
+                  ← Back to pull requests
+                </button>
+              )}
+              {workspaceStage === 'browse' && selectedRepository && (
+                <button className="back-button workspace-back-button" type="button" onClick={handleBackToRepositories}>
+                  ← All repositories
+                </button>
+              )}
               <button className={`connect-github-button${isGithubConnected ? ' is-connected' : ''}`} type="button" onClick={handleConnectGitHub} disabled={isConnecting || isGithubConnected}>
                 {isConnecting ? 'Connecting...' : isGithubConnected ? (
                   <img src="/GitHub_Invertocat_Black.svg" alt="GitHub connected" />
@@ -324,7 +495,7 @@ function IndexPage() {
         </div>
 
         <div className="index-content" aria-label="CodeGoat workspace">
-          {!isGithubConnected && (
+          {!isGithubConnected && workspaceStage !== 'chat' && (
             <div className="workspace-empty-state">
               <p className="eyebrow">GitHub workspace</p>
               <h1>Connect GitHub to get started</h1>
@@ -332,7 +503,25 @@ function IndexPage() {
             </div>
           )}
 
-          {isGithubConnected && !selectedRepository && (
+          {isGithubConnected && workspaceStage === 'analyzing' && selectedRepository && activePullRequest && (
+            <AnalysisLoadingPage
+              repository={selectedRepository}
+              pullRequest={activePullRequest}
+            />
+          )}
+
+          {workspaceStage === 'chat' && selectedRepository && activePullRequest && chatScope && (
+            <ChatPage
+              key={`${chatScope.chatId}-${conversationLoadVersion}`}
+              repository={selectedRepository}
+              pullRequest={activePullRequest}
+              scope={chatScope}
+              initialMessages={chatMessages}
+              onConversationSaved={() => void loadConversations()}
+            />
+          )}
+
+          {isGithubConnected && workspaceStage === 'browse' && !selectedRepository && (
             <div className="repository-page">
               <div className="repository-page-header">
                 <div>
@@ -364,9 +553,8 @@ function IndexPage() {
             </div>
           )}
 
-          {isGithubConnected && selectedRepository && (
+          {isGithubConnected && workspaceStage === 'browse' && selectedRepository && (
             <div className="repository-page pull-request-page">
-              <button className="back-button" type="button" onClick={handleBackToRepositories}>← All repositories</button>
               <div className="repository-page-header">
                 <div>
                   <p className="eyebrow">Configuration · Pull requests</p>
