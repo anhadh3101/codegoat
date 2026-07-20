@@ -18,7 +18,7 @@ export interface SupabaseRequestOptions {
   method?: string
   path: string
   accessToken?: string | null
-  body?: Record<string, unknown>
+  body?: Record<string, unknown> | Array<Record<string, unknown>>
 }
 
 declare module 'fastify' {

@@ -8,12 +8,12 @@ import {
 } from './generate-brief'
 import type { RepositoryBrief } from './schema'
 import { getFileSkipReason } from './file-filter'
+import type { BriefBatchRow } from './brief-store'
 
 const DEFAULT_CONCURRENCY = 5
 
-function printBrief(stage: string, path: string, brief: TreeBrief | RepositoryBrief): void {
-  console.log(`[RLM] ${stage} brief for ${path}:`)
-  console.log(typeof brief === 'string' ? brief : JSON.stringify(brief, null, 2))
+function printBrief(stage: string, path: string): void {
+  console.log(`[RLM] Generated ${stage} brief for ${path || '/'}`)
 }
 
 export type TreeBrief = string
@@ -28,6 +28,7 @@ export type RlmContext = {
   repositoryContext?: string
   maxFileSizeBytes?: number
   concurrency?: number
+  onBrief?: (brief: Omit<BriefBatchRow, 'analysis_id' | 'user_id'>) => void
 }
 
 export type AnalyzeRepositoryOptions = RlmContext & {
@@ -67,7 +68,13 @@ export async function analyzeNode(
   )
   if (skipReason) {
     const brief = createSkippedFileBrief(node.path, skipReason)
-    printBrief(node.type === 'tree' ? 'directory' : 'file', node.path, brief)
+    context.onBrief?.({
+      brief_type: node.type === 'tree' ? 'directory' : 'file',
+      path: node.path,
+      source_sha: node.sha,
+      brief_markdown: brief
+    })
+    printBrief(node.type === 'tree' ? 'directory' : 'file', node.path)
     return brief
   }
 
@@ -83,13 +90,25 @@ export async function analyzeNode(
       maxFileSizeBytes: context.maxFileSizeBytes
     })
 
-    printBrief('file', node.path, brief)
+    printBrief('file', node.path)
+    context.onBrief?.({
+      brief_type: 'file',
+      path: node.path,
+      source_sha: node.sha,
+      brief_markdown: brief
+    })
     return brief
   }
 
   if (node.type !== 'tree') {
     const brief = createSkippedFileBrief(node.path, `Unsupported Git tree node type: ${node.type}`)
-    printBrief('node', node.path, brief)
+    context.onBrief?.({
+      brief_type: 'file',
+      path: node.path,
+      source_sha: node.sha,
+      brief_markdown: brief
+    })
+    printBrief('node', node.path)
     return brief
   }
 
@@ -106,7 +125,13 @@ export async function analyzeNode(
     repositoryContext: context.repositoryContext
   })
 
-  printBrief('directory', node.path || '/', brief)
+  printBrief('directory', node.path)
+  context.onBrief?.({
+    brief_type: 'directory',
+    path: node.path,
+    source_sha: node.sha,
+    brief_markdown: brief
+  })
   return brief
 }
 
@@ -129,6 +154,12 @@ export async function analyzeRepository({
     repositoryContext: context.repositoryContext
   })
 
-  printBrief('repository', `${context.owner}/${context.repo}`, brief)
+  printBrief('repository', `${context.owner}/${context.repo}`)
+  context.onBrief?.({
+    brief_type: 'repository',
+    path: '',
+    source_sha: context.commitSha,
+    brief_json: brief
+  })
   return brief
 }

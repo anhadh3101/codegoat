@@ -4,6 +4,7 @@ import type { UserIntegration } from '../types/fastify'
 export const GITHUB_TOOLS = {
   listRepositories: 'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER',
   listPullRequests: 'GITHUB_LIST_PULL_REQUESTS',
+  listPullRequestFiles: 'GITHUB_LIST_PULL_REQUESTS_FILES',
   getPullRequest: 'GITHUB_GET_A_PULL_REQUEST',
   getTree: 'GITHUB_GET_A_TREE',
   getBlob: 'GITHUB_GET_A_BLOB'
@@ -87,6 +88,41 @@ export function extractPullRequests(result: unknown): unknown[] {
 export function extractPullRequest(result: unknown): unknown {
   const data = (result as { data?: unknown })?.data ?? result
   return (data as { response_data?: unknown })?.response_data ?? data
+}
+
+export function extractPullRequestFiles(result: unknown): unknown[] {
+  let data: unknown = (result as { data?: unknown })?.data ?? result
+
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (Array.isArray(data)) return data
+    if (!data || typeof data !== 'object') return []
+
+    const object = data as {
+      files?: unknown
+      details?: unknown
+      items?: unknown
+      response_data?: unknown
+      data?: unknown
+    }
+
+    if (Array.isArray(object.files)) return object.files
+    if (Array.isArray(object.details)) return object.details
+    if (Array.isArray(object.items)) return object.items
+
+    if (object.response_data !== undefined) {
+      data = object.response_data
+      continue
+    }
+
+    if (object.data !== undefined && object.data !== data) {
+      data = object.data
+      continue
+    }
+
+    return []
+  }
+
+  return []
 }
 
 export function buildRepositoryTree(result: unknown): {
