@@ -263,6 +263,17 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     }
 
     reply.hijack()
+    // Hijacked responses bypass Fastify's normal header serialization. Keep
+    // the CORS headers that the onRequest hook has already added.
+    for (const header of [
+      'Access-Control-Allow-Origin',
+      'Access-Control-Allow-Methods',
+      'Access-Control-Allow-Headers',
+      'Vary'
+    ]) {
+      const value = reply.getHeader(header)
+      if (typeof value === 'string') reply.raw.setHeader(header, value)
+    }
     reply.raw.writeHead(200, {
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',

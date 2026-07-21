@@ -2,6 +2,19 @@
 
 CodeGoat is an AI-assisted pull-request review workspace. Sign in with Supabase, connect GitHub through Composio, select a repository and pull request, and ask the agent to analyze the changes. Conversations and generated repository briefs are stored in Supabase.
 
+## Built with Codex and GPT-5.6
+
+Codex, powered by GPT-5.6, was used as a development partner throughout this project. It helped shape the React/Vite frontend and Fastify API, build the pull-request review and repository-analysis flows, add test coverage, and troubleshoot the production deployment.
+
+Key areas where Codex accelerated development:
+
+- Designing the authenticated Supabase, Composio GitHub, and Fastify integration.
+- Building the agent workflow that streams review responses and retrieves pull-request context.
+- Implementing the RLM-style repository briefing pipeline for persistent, structured codebase context.
+- Diagnosing build, deployment, CORS, and authentication issues across the frontend and API.
+
+GPT-5.6 was used during development through Codex. The deployed application uses `openai/gpt-5-mini` via OpenRouter for its runtime code-review and repository-brief generation requests.
+
 ## Local development
 
 ### Prerequisites
