@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { apiUrl } from './lib/api'
 import { AnalysisLoadingPage } from './components/AnalysisLoadingPage'
@@ -593,7 +593,36 @@ function IndexPage() {
 }
 
 function App() {
-  return window.location.pathname === '/signin' ? <SignInPage /> : <IndexPage />
+  if (window.location.pathname === '/signin') return <SignInPage />
+
+  return <RequireAuth><IndexPage /></RequireAuth>
+}
+
+function RequireAuth({ children }: { children: ReactNode }) {
+  const [isCheckingSession, setIsCheckingSession] = useState(isSupabaseConfigured)
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        window.location.replace('/signin')
+        return
+      }
+
+      setIsCheckingSession(false)
+    }
+
+    void checkSession()
+  }, [])
+
+  if (isCheckingSession) {
+    return <main className="auth-shell" aria-busy="true" />
+  }
+
+  return children
 }
 
 export default App
