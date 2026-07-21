@@ -5,7 +5,9 @@ services:
     plan: free
     branch: main
     rootDir: codegoat/backend
-    buildCommand: npm ci && npm run build
+    # NODE_ENV is production at runtime, but TypeScript and @types/node are
+    # devDependencies required while compiling the API.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /health
     envVars:
