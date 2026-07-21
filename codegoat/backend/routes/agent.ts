@@ -34,6 +34,13 @@ type ConversationSummaryRow = {
   updated_at: string
 }
 
+type ModelTurnEvent = {
+  sequence: number
+  content: string
+  toolCalls: Array<{ name: string }>
+  createdAt: string
+}
+
 function isConversationMessage(value: unknown): value is ConversationMessage {
   if (!value || typeof value !== 'object') return false
   const message = value as Partial<ConversationMessage>
@@ -102,6 +109,30 @@ function tokenFromStreamChunk(chunk: unknown): string {
 
 function writeSse(reply: FastifyReply, event: string, data: unknown): void {
   reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+}
+
+function modelTurnFromUpdate(update: Record<string, unknown>, sequence: number): ModelTurnEvent | null {
+  const messages = update.messages
+  if (!Array.isArray(messages)) return null
+
+  const message = messages.at(-1) as {
+    type?: unknown
+    _getType?: () => string
+    content?: unknown
+    tool_calls?: Array<{ name?: unknown }>
+  } | undefined
+  if (!message) return null
+  const messageType = message._getType?.() ?? message.type
+  if (messageType !== 'ai') return null
+
+  return {
+    sequence,
+    content: textFromContent(message.content),
+    toolCalls: (message.tool_calls ?? [])
+      .map((call) => typeof call.name === 'string' ? { name: call.name } : null)
+      .filter((call): call is { name: string } => call !== null),
+    createdAt: new Date().toISOString()
+  }
 }
 
 export default async function agentRoutes(fastify: FastifyInstance) {
@@ -271,8 +302,20 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       } satisfies GetFileBriefRuntime, streamAbortController.signal)
 
       let assistantContent = ''
+      let modelTurnSequence = 0
       for await (const chunk of stream) {
         if (streamAbortController.signal.aborted) break
+
+        if (Array.isArray(chunk) && chunk[0] === 'updates') {
+          const updates = chunk[1]
+          const agentUpdate = updates && typeof updates === 'object'
+            ? (updates as Record<string, unknown>).agent
+            : null
+          if (agentUpdate && typeof agentUpdate === 'object') {
+            const modelTurn = modelTurnFromUpdate(agentUpdate as Record<string, unknown>, ++modelTurnSequence)
+            if (modelTurn) writeSse(reply, 'model_turn', modelTurn)
+          }
+        }
 
         const token = tokenFromStreamChunk(chunk)
         if (token) {

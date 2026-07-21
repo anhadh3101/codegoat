@@ -89,3 +89,10 @@ export type ConversationDetail = {
   state: ChatScope
   messages: ConversationMessage[]
 }
+
+export type ModelTurnEvent = {
+  sequence: number
+  content: string
+  toolCalls: Array<{ name: string }>
+  createdAt: string
+}

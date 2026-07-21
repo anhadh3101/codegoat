@@ -340,6 +340,20 @@ input:focus { border-color: #777777; background: var(--surface-raised); }
 .chat-message { max-width: min(85%, 580px); margin: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
 .chat-message-user { justify-self: end; border-color: #f06464; background: #f06464; color: #171111; }
 .chat-message-assistant { justify-self: start; background: var(--page); }
+.model-turn { width: min(100%, 580px); border: 1px solid var(--border); border-radius: 7px; background: color-mix(in srgb, var(--page) 88%, var(--surface)); color: var(--muted); }
+.model-turn-summary { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 11px 13px; cursor: pointer; list-style: none; }
+.model-turn-summary::-webkit-details-marker { display: none; }
+.model-turn-summary::before { content: '›'; width: 12px; color: #f06464; font-size: 18px; line-height: 10px; transform: rotate(0deg); transition: transform .15s ease; }
+.model-turn[open] .model-turn-summary::before { transform: rotate(90deg); }
+.model-turn-title { margin-right: auto; color: var(--text); font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+.model-turn-action { color: var(--subtle); font-size: 10px; }
+.model-turn-body { display: grid; gap: 12px; padding: 0 13px 13px 38px; border-top: 1px solid var(--border); }
+.model-turn-tools { display: grid; gap: 6px; padding-top: 11px; }
+.model-turn-label { color: var(--subtle); font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.model-turn-tool { color: var(--text); font-size: 12px; }
+.model-turn-tool::before { content: '↳'; margin-right: 7px; color: #f06464; }
+.model-turn-content { margin: 0; padding-top: 11px; color: var(--muted); font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+.model-turn-empty { margin: 0; padding-top: 11px; color: var(--subtle); font-size: 11px; font-style: italic; }
 .chat-composer { display: flex; gap: 8px; width: min(100%, 720px); margin: 0 auto; padding: 6px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--page); }
 .chat-composer input { height: 42px; border: 0; background: transparent; }
 .chat-composer input:focus { background: transparent; }

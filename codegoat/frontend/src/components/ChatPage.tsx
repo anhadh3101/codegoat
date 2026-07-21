@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import type { ChatScope, ConversationMessage, PullRequest, Repository } from '../types'
+import type { ChatScope, ConversationMessage, ModelTurnEvent, PullRequest, Repository } from '../types'
 
 type ChatPageProps = {
   repository: Repository
@@ -25,6 +25,8 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
     content: chatMessage.content
   })))
   const [isSending, setIsSending] = useState(false)
+  const [modelTurns, setModelTurns] = useState<ModelTurnEvent[]>([])
+  const [activeAssistantMessageId, setActiveAssistantMessageId] = useState<string | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
 
   useEffect(() => () => abortControllerRef.current?.abort(), [])
@@ -53,6 +55,8 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
       { id: assistantMessageId, role: 'assistant', content: '' }
     ])
     setMessage('')
+    setModelTurns([])
+    setActiveAssistantMessageId(assistantMessageId)
     setIsSending(true)
     abortControllerRef.current = abortController
 
@@ -90,12 +94,18 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
         buffer = events.pop() ?? ''
 
         for (const event of events) {
-          const data = event.split('\n').find((line) => line.startsWith('data: '))
+          const lines = event.split('\n')
+          const eventName = lines.find((line) => line.startsWith('event: '))?.slice(7) ?? 'message'
+          const data = lines.find((line) => line.startsWith('data: '))
           if (!data) continue
 
-          const payload = JSON.parse(data.slice(6)) as { token?: string; error?: string }
+          const payload = JSON.parse(data.slice(6)) as { token?: string; error?: string } & Partial<ModelTurnEvent>
+          if (eventName === 'model_turn' && typeof payload.sequence === 'number' && Array.isArray(payload.toolCalls)) {
+            setModelTurns((current) => [...current, payload as ModelTurnEvent])
+            continue
+          }
           if (payload.error) throw new Error(payload.error)
-          if (!payload.token) continue
+          if (eventName !== 'token' || !payload.token) continue
 
           setMessages((current) => current.map((chatMessage) => (
             chatMessage.id === assistantMessageId
@@ -144,9 +154,14 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
       ) : (
         <div className="chat-messages" aria-live="polite">
           {messages.map((chatMessage) => (
-            <p className={`chat-message chat-message-${chatMessage.role}`} key={chatMessage.id}>
-              {chatMessage.content || 'Thinking…'}
-            </p>
+            <Fragment key={chatMessage.id}>
+              {chatMessage.id === activeAssistantMessageId && modelTurns.map((turn) => (
+                <ModelTurn key={`${turn.sequence}-${turn.createdAt}`} turn={turn} />
+              ))}
+              <p className={`chat-message chat-message-${chatMessage.role}`}>
+                {chatMessage.content || 'Thinking…'}
+              </p>
+            </Fragment>
           ))}
         </div>
       )}
@@ -160,5 +175,42 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
         )}
       </form>
     </div>
+  )
+}
+
+function friendlyToolName(name: string): string {
+  const labels: Record<string, string> = {
+    get_pr_context: 'Look up pull request files',
+    get_next_file_patch: 'Read the next file patch',
+    get_brief_context: 'Load repository context'
+  }
+  return labels[name] ?? name.replaceAll('_', ' ')
+}
+
+function ModelTurn({ turn }: { turn: ModelTurnEvent }) {
+  const hasTools = turn.toolCalls.length > 0
+  const summary = hasTools
+    ? `Requested ${turn.toolCalls.length === 1 ? 'a tool' : `${turn.toolCalls.length} tools`}`
+    : turn.content ? 'Generated a response' : 'Completed a model turn'
+
+  return (
+    <details className="model-turn">
+      <summary className="model-turn-summary">
+        <span className="model-turn-title">Agent turn {turn.sequence}</span>
+        <span className="model-turn-action">{summary}</span>
+      </summary>
+      <div className="model-turn-body">
+        {hasTools && (
+          <div className="model-turn-tools">
+            <span className="model-turn-label">Tool request</span>
+            {turn.toolCalls.map((tool, index) => (
+              <span className="model-turn-tool" key={`${tool.name}-${index}`}>{friendlyToolName(tool.name)}</span>
+            ))}
+          </div>
+        )}
+        {turn.content && <p className="model-turn-content">{turn.content}</p>}
+        {!turn.content && !hasTools && <p className="model-turn-empty">No visible model text for this turn.</p>}
+      </div>
+    </details>
   )
 }
