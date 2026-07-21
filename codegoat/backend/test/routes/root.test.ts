@@ -25,8 +25,11 @@ test('allows browser requests from the configured frontend origin', async (t) =>
 
   const res = await app.inject({
     method: 'OPTIONS',
-    url: '/api/agent/messages',
-    headers: { origin: 'http://localhost:5173' }
+    url: '/health',
+    headers: {
+      origin: 'http://localhost:5173',
+      'access-control-request-method': 'GET'
+    }
   })
 
   assert.strictEqual(res.statusCode, 204)

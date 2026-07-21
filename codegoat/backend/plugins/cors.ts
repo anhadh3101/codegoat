@@ -15,7 +15,12 @@ export default fp(async function (fastify) {
     reply.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     reply.header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
     reply.header('Vary', 'Origin')
+  })
 
-    if (request.method === 'OPTIONS') return reply.code(204).send()
+  // Browser requests with an Authorization header send a preflight OPTIONS
+  // request before the actual API request. Define an explicit catch-all route
+  // so preflights succeed even when the target endpoint has no OPTIONS route.
+  fastify.options('/*', async function (_request, reply) {
+    return reply.code(204).send()
   })
 })
