@@ -1,6 +1,9 @@
 import { ToolMessage, type AIMessage } from '@langchain/core/messages'
 import type { RunnableConfig } from '@langchain/core/runnables'
-import { listPullRequestFiles, type ListPullRequestFilesRuntime } from '../tools/list-pr-files'
+import {
+  listPullRequestFiles,
+  type ListPullRequestFilesRuntime
+} from '../tools/list-pr-files'
 import type { ChatScope } from './scope'
 
 type ListPrFilesNodeState = {
@@ -32,7 +35,10 @@ export async function listPrFilesNode(
       messages: [new ToolMessage({
         tool_call_id: toolCallId,
         content: 'Pull-request files are unavailable because GitHub is not connected for this chat.'
-      })]
+      })],
+      changedFiles: [],
+      nextFileIndex: 0,
+      activeFilePath: null
     }
   }
 
@@ -40,15 +46,19 @@ export async function listPrFilesNode(
     `[list-pr-files-node.ts (listPrFilesNode)] Doing list files for ${state.scope.repository.fullName}#${state.scope.pullRequest.number}`
   )
   try {
-    const files = await listPullRequestFiles(state.scope, runtime)
+    const { responses, changedFiles } = await listPullRequestFiles(state.scope, runtime)
     console.log(
-      `[list-pr-files-node.ts (listPrFilesNode)] Doing return ${files.length} raw Composio responses`
+      `[list-pr-files-node.ts (listPrFilesNode)] Doing return ${changedFiles.length} changed files from ${responses.length} raw Composio responses`
     )
 
     return {
+      changedFiles,
+      nextFileIndex: 0,
+      activeFilePath: null,
+      fileBriefs: {},
       messages: [new ToolMessage({
         tool_call_id: toolCallId,
-        content: JSON.stringify({ responses: files })
+        content: JSON.stringify({ responses })
       })]
     }
   } catch (error) {
@@ -57,7 +67,11 @@ export async function listPrFilesNode(
       messages: [new ToolMessage({
         tool_call_id: toolCallId,
         content: 'Pull-request files could not be loaded. Explain that GitHub context is currently unavailable.'
-      })]
+      })],
+      changedFiles: [],
+      nextFileIndex: 0,
+      activeFilePath: null,
+      fileBriefs: {}
     }
   }
 }

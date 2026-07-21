@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import type { ChatScope, ConversationMessage, PullRequest, Repository } from '../types'
@@ -25,6 +25,13 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
     content: chatMessage.content
   })))
   const [isSending, setIsSending] = useState(false)
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  useEffect(() => () => abortControllerRef.current?.abort(), [])
+
+  const handleAbort = () => {
+    abortControllerRef.current?.abort()
+  }
 
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -38,6 +45,7 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
       content
     }
     const assistantMessageId = crypto.randomUUID()
+    const abortController = new AbortController()
 
     setMessages((current) => [
       ...current,
@@ -46,6 +54,7 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
     ])
     setMessage('')
     setIsSending(true)
+    abortControllerRef.current = abortController
 
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -58,7 +67,8 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
           Authorization: `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ message: content, scope })
+        body: JSON.stringify({ message: content, scope }),
+        signal: abortController.signal
       })
 
       if (!response.ok || !response.body) {
@@ -96,6 +106,15 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
       }
 
     } catch (error) {
+      if (abortController.signal.aborted) {
+        setMessages((current) => current.map((chatMessage) => (
+          chatMessage.id === assistantMessageId && !chatMessage.content
+            ? { ...chatMessage, content: 'Response stopped.' }
+            : chatMessage
+        )))
+        return
+      }
+
       const errorMessage = error instanceof Error ? error.message : 'Unable to reach the agent.'
       setMessages((current) => current.map((chatMessage) => (
         chatMessage.id === assistantMessageId
@@ -103,6 +122,9 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
           : chatMessage
       )))
     } finally {
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null
+      }
       setIsSending(false)
     }
   }
@@ -131,7 +153,11 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
 
       <form className="chat-composer" onSubmit={handleSubmit}>
         <input aria-label="Message the repository agent" placeholder="Ask the agent anything about this pull request…" value={message} onChange={(event) => setMessage(event.target.value)} disabled={isSending} />
-        <button type="submit" aria-label="Send message" disabled={!message.trim() || isSending}>{isSending ? 'Thinking…' : <>Send <span aria-hidden="true">↗</span></>}</button>
+        {isSending ? (
+          <button className="chat-stop-button" type="button" onClick={handleAbort} aria-label="Stop generating"><span aria-hidden="true">■</span></button>
+        ) : (
+          <button type="submit" aria-label="Send message" disabled={!message.trim()}>Send <span aria-hidden="true">↗</span></button>
+        )}
       </form>
     </div>
   )

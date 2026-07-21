@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { z } from 'zod'
 import { streamCodeReviewGraph } from '../services/agent/state-graph'
+import type { GetFileBriefRuntime } from '../services/briefs/get-file-brief'
 import { ChatScopeSchema } from '../services/agent/scope'
 import { formatCodegoatScope } from '../services/prompt/codegoat'
 import type { ListPullRequestFilesRuntime } from '../services/tools/list-pr-files'
@@ -237,6 +238,10 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'X-Accel-Buffering': 'no'
     })
+    const streamAbortController = new AbortController()
+    const abortOnDisconnect = () => streamAbortController.abort()
+    request.raw.once('aborted', abortOnDisconnect)
+    reply.raw.once('close', abortOnDisconnect)
 
     try {
       request.log.info(
@@ -259,10 +264,16 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       const stream = await streamCodeReviewGraph({
         messages: toModelMessages(messages, activeScope),
         scope: activeScope
-      }, activeScope.chatId, listPullRequestFilesRuntime)
+      }, activeScope.chatId, listPullRequestFilesRuntime, {
+        userId,
+        accessToken: request.supabaseAccessToken,
+        supabaseRequest: fastify.supabaseRequest.bind(fastify)
+      } satisfies GetFileBriefRuntime, streamAbortController.signal)
 
       let assistantContent = ''
       for await (const chunk of stream) {
+        if (streamAbortController.signal.aborted) break
+
         const token = tokenFromStreamChunk(chunk)
         if (token) {
           assistantContent += token
@@ -284,14 +295,22 @@ export default async function agentRoutes(fastify: FastifyInstance) {
         ])
       }
 
-      writeSse(reply, 'done', {})
+      if (!streamAbortController.signal.aborted) {
+        writeSse(reply, 'done', {})
+      }
     } catch (error) {
-      request.log.error(error, 'Agent stream failed')
-      writeSse(reply, 'error', {
-        error: 'Unable to generate an agent response'
-      })
+      if (streamAbortController.signal.aborted) {
+        request.log.info('Agent stream cancelled by client')
+      } else {
+        request.log.error(error, 'Agent stream failed')
+        writeSse(reply, 'error', {
+          error: 'Unable to generate an agent response'
+        })
+      }
     } finally {
-      reply.raw.end()
+      request.raw.off('aborted', abortOnDisconnect)
+      reply.raw.off('close', abortOnDisconnect)
+      if (!reply.raw.writableEnded) reply.raw.end()
     }
   })
 }

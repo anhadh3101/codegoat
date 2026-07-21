@@ -50,7 +50,7 @@ function SignInPage() {
     if (mode === 'sign-up') {
       setMessage('Account created. Check your inbox to confirm your email.')
     } else {
-      setMessage('Signed in successfully.')
+      window.location.assign('/index')
     }
   }
 
@@ -58,7 +58,7 @@ function SignInPage() {
     <main className="auth-shell">
       <section className="form-panel">
         <div className="form-wrap">
-          <div className="brand-mark" aria-label="Codegoat">cg</div>
+          <div className="auth-brand">CodeGoat</div>
           <div className="form-heading">
             <h2>{mode === 'sign-in' ? 'Welcome back' : 'Create your account'}</h2>
             <p>{mode === 'sign-in' ? 'Sign in to pick up where you left off.' : 'Start building a better way to work.'}</p>
@@ -75,7 +75,6 @@ function SignInPage() {
 
             <div className="label-row">
               <label htmlFor="password">Password</label>
-              {mode === 'sign-in' && <button type="button" className="text-button" onClick={() => setMessage('Password reset will be available once email recovery is configured.')}>Forgot password?</button>}
             </div>
             <div className="password-field">
               <input id="password" name="password" type={showPassword ? 'text' : 'password'} autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'} placeholder="At least 6 characters" minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} required />
@@ -86,8 +85,6 @@ function SignInPage() {
             {message && <p className="form-message success" role="status">{message}</p>}
             <button className="submit-button" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Working...' : mode === 'sign-in' ? 'Continue to workspace  →' : 'Create account  →'}</button>
           </form>
-
-          <p className="legal">By continuing, you agree to our <a href="#terms">Terms</a> and <a href="#privacy">Privacy Policy</a>.</p>
         </div>
       </section>
     </main>
@@ -443,7 +440,7 @@ function IndexPage() {
         </a>
 
         <div className="chat-list" aria-label="Saved chats">
-          <p className="chat-list-label">Conversations</p>
+          <p className="chat-list-label">History</p>
           {isLoadingConversations && <p className="chat-list-state">Loading…</p>}
           {!isLoadingConversations && conversations.length === 0 && <p className="chat-list-state">No conversations yet.</p>}
           {!isLoadingConversations && conversations.map((conversation) => {
@@ -497,17 +494,13 @@ function IndexPage() {
         <div className="index-content" aria-label="CodeGoat workspace">
           {!isGithubConnected && workspaceStage !== 'chat' && (
             <div className="workspace-empty-state">
-              <p className="eyebrow">GitHub workspace</p>
-              <h1>Connect GitHub to get started</h1>
-              <p>Connect your account to see your repositories and choose where to begin.</p>
+              <h1>Connect GitHub</h1>
+              <p>Choose a repository to begin.</p>
             </div>
           )}
 
           {isGithubConnected && workspaceStage === 'analyzing' && selectedRepository && activePullRequest && (
-            <AnalysisLoadingPage
-              repository={selectedRepository}
-              pullRequest={activePullRequest}
-            />
+            <AnalysisLoadingPage />
           )}
 
           {workspaceStage === 'chat' && selectedRepository && activePullRequest && chatScope && (
@@ -526,7 +519,7 @@ function IndexPage() {
               <div className="repository-page-header">
                 <div>
                   <p className="eyebrow">GitHub workspace</p>
-                  <h1>Your repositories</h1>
+                  <h1>My Repositories</h1>
                 </div>
                 <span className="repository-count">{repositories.length} {repositories.length === 1 ? 'repository' : 'repositories'}</span>
               </div>
@@ -539,7 +532,12 @@ function IndexPage() {
                   {repositories.map((repository, index) => (
                     <li key={repository.id ?? repository.full_name ?? repository.name ?? index}>
                       <button className="repo-item repo-select-button" type="button" onClick={() => void handleRepositorySelect(repository)}>
-                        <span className="repo-icon" aria-hidden="true">⌁</span>
+                        <span className="repo-icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" focusable="false">
+                            <path d="M4.5 6.5h5l1.8 2h8.2v9.2a1.8 1.8 0 0 1-1.8 1.8H6.3a1.8 1.8 0 0 1-1.8-1.8V6.5Z" />
+                            <path d="M4.5 9h15" />
+                          </svg>
+                        </span>
                         <span className="repo-copy">
                           <span className="repo-name">{repository.full_name || repository.name || 'Untitled repository'}</span>
                           <span className="repo-description">{repository.description || 'No description provided'}</span>
@@ -557,7 +555,7 @@ function IndexPage() {
             <div className="repository-page pull-request-page">
               <div className="repository-page-header">
                 <div>
-                  <p className="eyebrow">Configuration · Pull requests</p>
+                  <p className="eyebrow">Pull requests</p>
                   <h1>{selectedRepository.full_name || selectedRepository.name || 'Repository'}</h1>
                 </div>
                 {!isLoadingPullRequests && !pullRequestError && <span className="repository-count">{pullRequests.length} active {pullRequests.length === 1 ? 'PR' : 'PRs'}</span>}
@@ -579,7 +577,7 @@ function IndexPage() {
                           <span className="repo-name">{pullRequest.title || 'Untitled pull request'}{pullRequest.draft ? <span className="draft-badge">Draft</span> : null}</span>
                           <span className="repo-description">{pullRequest.user?.login ? `Opened by ${pullRequest.user.login}` : 'Open pull request'}</span>
                         </span>
-                        <span className="repo-select-affordance" aria-hidden="true">Open ↗</span>
+                        <span className="repo-select-affordance" aria-hidden="true">Start Review</span>
                       </a>
                     </li>
                   ))}

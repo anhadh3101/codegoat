@@ -1,11 +1,23 @@
 import { SystemMessage } from '@langchain/core/messages'
-import { END, MessagesValue, START, StateGraph, StateSchema } from '@langchain/langgraph'
+import { END, MessagesValue, ReducedValue, START, StateGraph, StateSchema } from '@langchain/langgraph'
 import { codegoatModel } from './codegoat'
+import { getNextFilePatchNode } from './get-next-file-patch-node'
+import { fetchFileBriefNode } from './fetch-file-brief-node'
+import { getBriefContextNode } from './get-brief-context-node'
 import { listPrFilesNode } from './list-pr-files-node'
 import { ChatScopeSchema } from './scope'
-import { getPrContextTool } from './tools'
+import { getBriefContextTool, getNextFilePatchTool, getPrContextTool } from './tools'
 import type { ListPullRequestFilesRuntime } from '../tools/list-pr-files'
+import type { GetFileBriefRuntime } from '../briefs/get-file-brief'
+import { z } from 'zod'
 import { codegoatPrompt } from '../prompt/codegoat'
+
+const ChangedFileSchema = z.object({
+  path: z.string().min(1),
+  status: z.string().optional(),
+  previousPath: z.string().optional(),
+  patch: z.string().optional()
+})
 
 /**
  * The outer graph's public contract. Scope is kept in graph state so future
@@ -14,14 +26,40 @@ import { codegoatPrompt } from '../prompt/codegoat'
  */
 const AgentState = new StateSchema({
   messages: MessagesValue,
-  scope: ChatScopeSchema
+  scope: ChatScopeSchema,
+  changedFiles: z.array(ChangedFileSchema).default([]),
+  nextFileIndex: z.number().int().nonnegative().default(0),
+  activeFilePath: z.string().min(1).nullable().default(null),
+  fileBriefs: new ReducedValue(
+    z.record(z.string(), z.object({
+      status: z.enum(['found', 'not_found', 'error']),
+      content: z.string().optional(),
+      sourcePath: z.string().optional(),
+      sourceSha: z.string().nullable().optional()
+    })).default({}),
+    {
+      reducer: (current, next) => ({ ...current, ...next })
+    }
+  ),
+  retrievedBriefs: new ReducedValue(
+    z.record(z.string(), z.object({
+      type: z.enum(['file', 'directory', 'repository']),
+      path: z.string(),
+      status: z.enum(['found', 'not_found', 'error']),
+      content: z.string().optional(),
+      sourceSha: z.string().nullable().optional()
+    })).default({}),
+    {
+      reducer: (current, next) => ({ ...current, ...next })
+    }
+  )
 })
 
 /**
  * The model decides when it needs PR context. The outer graph owns tool routing
  * so scoped nodes can be extended with deterministic follow-up steps.
  */
-const modelWithTools = codegoatModel.bindTools([getPrContextTool])
+const modelWithTools = codegoatModel.bindTools([getPrContextTool, getNextFilePatchTool, getBriefContextTool])
 
 async function agentNode(state: typeof AgentState.State) {
   console.log('[state-graph.ts (agentNode)] Doing model turn')
@@ -51,18 +89,34 @@ function routeAfterAgent(state: typeof AgentState.State) {
     return 'list_pr_files'
   }
 
+  if (messageType === 'ai' && toolNames.includes('get_next_file_patch')) {
+    return 'get_next_file_patch'
+  }
+
+  if (messageType === 'ai' && toolNames.includes('get_brief_context')) {
+    return 'get_brief_context'
+  }
+
   return END
 }
 
 export const codeReviewGraph = new StateGraph(AgentState)
   .addNode('agent', agentNode)
   .addNode('list_pr_files', listPrFilesNode as unknown as typeof AgentState.Node)
+  .addNode('get_next_file_patch', getNextFilePatchNode as unknown as typeof AgentState.Node)
+  .addNode('fetch_file_brief', fetchFileBriefNode as unknown as typeof AgentState.Node)
+  .addNode('get_brief_context', getBriefContextNode as unknown as typeof AgentState.Node)
   .addEdge(START, 'agent')
   .addConditionalEdges('agent', routeAfterAgent, {
     list_pr_files: 'list_pr_files',
+    get_next_file_patch: 'get_next_file_patch',
+    get_brief_context: 'get_brief_context',
     [END]: END
   })
   .addEdge('list_pr_files', 'agent')
+  .addEdge('get_next_file_patch', 'fetch_file_brief')
+  .addEdge('fetch_file_brief', 'agent')
+  .addEdge('get_brief_context', 'agent')
   .compile()
 
 export type CodeReviewGraphInput = Pick<typeof AgentState.State, 'messages' | 'scope'>
@@ -74,12 +128,15 @@ export type CodeReviewGraphInput = Pick<typeof AgentState.State, 'messages' | 's
 export function streamCodeReviewGraph(
   input: CodeReviewGraphInput,
   threadId: string,
-  listPullRequestFilesRuntime?: ListPullRequestFilesRuntime
+  listPullRequestFilesRuntime?: ListPullRequestFilesRuntime,
+  getFileBriefRuntime?: GetFileBriefRuntime,
+  signal?: AbortSignal
 ) {
   console.log(`[state-graph.ts (streamCodeReviewGraph)] Doing stream for thread ${threadId}`)
   return codeReviewGraph.stream(input, {
-    configurable: { thread_id: threadId, listPullRequestFilesRuntime },
+    configurable: { thread_id: threadId, listPullRequestFilesRuntime, getFileBriefRuntime },
     streamMode: ['messages', 'updates'],
-    recursionLimit: 50
+    recursionLimit: 50,
+    signal
   })
 }
