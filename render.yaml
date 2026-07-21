@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     branch: main
-    rootDir: backend
+    rootDir: codegoat/backend
     buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /health
@@ -28,7 +28,7 @@ services:
     name: codegoat-web
     runtime: static
     branch: main
-    rootDir: frontend
+    rootDir: codegoat/frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
     routes:
