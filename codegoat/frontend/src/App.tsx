@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
+import { apiUrl } from './lib/api'
 import { AnalysisLoadingPage } from './components/AnalysisLoadingPage'
 import { ChatPage } from './components/ChatPage'
 import type { ChatScope, ConversationDetail, ConversationMessage, ConversationSummary, PullRequest, PullRequestDetails, Repository } from './types'
@@ -119,7 +120,7 @@ function IndexPage() {
 
     setIsLoadingConversations(true)
     try {
-      const conversationsResponse = await fetch('/api/agent/conversations', {
+      const conversationsResponse = await fetch(apiUrl('/api/agent/conversations'), {
         headers: { Authorization: `Bearer ${session.access_token}` }
       })
       const conversationsResult = await conversationsResponse.json() as { conversations?: ConversationSummary[] }
@@ -143,7 +144,7 @@ function IndexPage() {
       if (!session) return
 
       try {
-        const response = await fetch('/api/integrations/github/status', {
+        const response = await fetch(apiUrl('/api/integrations/github/status'), {
           headers: {
             Authorization: `Bearer ${session.access_token}`
           }
@@ -156,7 +157,7 @@ function IndexPage() {
         setIsLoadingRepos(true)
 
         try {
-          const repositoriesResponse = await fetch('/api/repos', {
+          const repositoriesResponse = await fetch(apiUrl('/api/repos'), {
             headers: {
               Authorization: `Bearer ${session.access_token}`
             }
@@ -194,7 +195,7 @@ function IndexPage() {
       return
     }
 
-    const response = await fetch('/api/integrations/github/connect', {
+    const response = await fetch(apiUrl('/api/integrations/github/connect'), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${session.access_token}`
@@ -248,7 +249,7 @@ function IndexPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const response = await fetch(`/api/agent/conversations/${encodeURIComponent(conversation.id)}`, {
+      const response = await fetch(apiUrl(`/api/agent/conversations/${encodeURIComponent(conversation.id)}`), {
         headers: { Authorization: `Bearer ${session.access_token}` }
       })
       const result = await response.json() as { conversation?: ConversationDetail; error?: string }
@@ -312,7 +313,7 @@ function IndexPage() {
     }
 
     try {
-      const response = await fetch(`/api/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/pulls`, {
+      const response = await fetch(apiUrl(`/api/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/pulls`), {
         headers: { Authorization: `Bearer ${session.access_token}` }
       })
       const result = await response.json()
@@ -365,7 +366,7 @@ function IndexPage() {
     setWorkspaceStage('analyzing')
 
     try {
-      const response = await fetch(`/api/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/pulls/${pullRequest.number}`, {
+      const response = await fetch(apiUrl(`/api/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/pulls/${pullRequest.number}`), {
         headers: { Authorization: `Bearer ${session.access_token}` }
       })
       const responseText = await response.text()

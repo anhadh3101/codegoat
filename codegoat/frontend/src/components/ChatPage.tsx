@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
+import { apiUrl } from '../lib/api'
 import type { ChatScope, ConversationMessage, ModelTurnEvent, PullRequest, Repository } from '../types'
 
 type ChatPageProps = {
@@ -64,7 +65,7 @@ export function ChatPage({ repository, pullRequest, scope, initialMessages = [],
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('Your session has expired. Please sign in again.')
 
-      const response = await fetch('/api/agent/messages', {
+      const response = await fetch(apiUrl('/api/agent/messages'), {
         method: 'POST',
         headers: {
           Accept: 'text/event-stream',
